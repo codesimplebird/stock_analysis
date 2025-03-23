@@ -1,5 +1,5 @@
-from src_code.coreSearch import coreSearch as cs
-import akshare as akgit
+from src_code import coreSearch as cs
+import akshare as ak
 import pandas as pd
 from datetime import datetime
 
@@ -15,12 +15,20 @@ import time
 
 END_DATE = datetime.today().strftime("%Y%m%d")
 START_DATE = "20240901"
+RESULT_PATH = f"upward_result/{datetime.now().strftime('%Y%m%d')}.csv"
 
 stockDATA_Sources = "stock_zh_a_spot_em.csv"
 UPWARD_longDate = 30
-UPWARD_longDate_limitation = 25
-UPWARD_shortDate = 10
-UPWARD_shortDate_limitation = 10
+UPWARD_longDate_limitation = 22
+UPWARD_shortDate = 6
+UPWARD_shortDate_limitation = 6
+
+# -1 为前一天 None 为当天, RE_DATA 用于加减计算 re_date 切片计算
+RE_DATA = 0
+if RE_DATA == -1:
+    re_date = -1
+elif RE_DATA == 0:
+    re_date = None
 
 
 class stock_upward:
@@ -94,9 +102,13 @@ class stock_upward:
     def rm_stop_and_down(self, stock_data):
         # 20日线向上
         if (
-            stock_data["MA20_is_upward"].iloc[-UPWARD_longDate:].sum()
+            stock_data["MA20_is_upward"]
+            .iloc[-UPWARD_longDate + RE_DATA : re_date]
+            .sum()
             < UPWARD_longDate_limitation
-            or stock_data["MA20_is_upward"].iloc[-UPWARD_shortDate:].sum()
+            or stock_data["MA20_is_upward"]
+            .iloc[-UPWARD_shortDate + RE_DATA : re_date]
+            .sum()
             < UPWARD_shortDate_limitation
         ):
             return False
@@ -114,23 +126,25 @@ class stock_upward:
 
         # 最近一天没有涨跌扩大
         if (
-            stock_data["涨跌幅"].iloc[-1:].values[0] < -5
-            or stock_data["涨跌幅"].iloc[-5:].max() > 9
+            stock_data["涨跌幅"].iloc[-1 + RE_DATA : re_date].values[0] < -5
+            or stock_data["涨跌幅"].iloc[-10 + RE_DATA : re_date].max() > 9
         ):
 
             return False
         down_pct = (
-            stock_data["收盘"].iloc[-20:].max() - stock_data["收盘"].iloc[-1:].values[0]
-        ) / stock_data["收盘"].iloc[-1:].values[0]
+            stock_data["收盘"].iloc[-20:].max()
+            - stock_data["收盘"].iloc[-1 + RE_DATA :].values[0]
+        ) / stock_data["收盘"].iloc[-1 + RE_DATA :].values[0]
         up_pct = (
-            stock_data["收盘"].iloc[-10:].min() - stock_data["收盘"].iloc[-1:].values[0]
-        ) / stock_data["收盘"].iloc[-1:].values[0]
+            stock_data["收盘"].iloc[-10:].min()
+            - stock_data["收盘"].iloc[-1 + RE_DATA :].values[0]
+        ) / stock_data["收盘"].iloc[-1 + RE_DATA :].values[0]
         # 最近20天没有大幅度下跌
-        if down_pct > 0.02 or up_pct > 0.25:
+        if down_pct > 0.05 or up_pct > 0.20:
             return False
-        self.change_pct = change_pct
-        self.current_ZD = stock_data["涨跌幅"].iloc[-1:].values[0]
-        return True
+
+        current_ZD = stock_data["涨跌幅"].iloc[-1:].values[0]
+        return [True, change_pct, current_ZD]
 
     def run(self, stock):
 
@@ -146,15 +160,15 @@ class stock_upward:
         except Exception as e:
             print(f" 数据处理失败\n {e}")
             return 0
-
-        if self.rm_stop_and_down(stock_data100):
+        process_Data = self.rm_stop_and_down(stock_data100)
+        if isinstance(process_Data, list):
             stock_info = ak.stock_individual_info_em(symbol=code)
             hy_info = stock_info.values[6][1]
             print(f"{code,name} 符合条件")
 
-            with open("stock_upward.csv", "a+") as f:
+            with open(RESULT_PATH, "a+") as f:
                 f.write(
-                    f"{code},{name},{self.change_pct},{syl},{hy_info},{self.current_ZD}\n"
+                    f"{code},{name},{process_Data[1]},{syl},{hy_info},{process_Data[2]}\n"
                 )
             return 0
         else:
@@ -172,7 +186,7 @@ if __name__ == "__main__":
         zip(stock_code_Df["代码"], stock_code_Df["名称"], stock_code_Df["市盈率"])
     )
     print("开始获取股票数据")
-    with open("stock_upward.csv", "w") as f:
+    with open(RESULT_PATH, "w") as f:
 
         f.write(
             f"代码,名字,近期涨跌幅,市盈率,行业,当日涨跌幅{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -181,6 +195,13 @@ if __name__ == "__main__":
         executor.map(stock.run, stock_list)
 
     print(f"耗时{time.time()-start}")
+    import shutil
+
+    try:
+        shutil.copy(RESULT_PATH, "stock_upward.csv")
+        print(f"文件已成功复制并重命名为 stock_upward.csv")
+    except IOError as e:
+        print(f"无法复制文件. 错误: {e}")
 
     # stock = cs.stock_zh_a_hist_zk(
     #     period="daily",
