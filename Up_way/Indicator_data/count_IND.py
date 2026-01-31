@@ -89,7 +89,7 @@ class Stock_Analysis:
 if __name__ == "__main__":
     # 获取 A 股所有股票列表
     Stock_Analysis = Stock_Analysis()
-    Stock_Analysis.stock_amount("20250307")
+    Stock_Analysis.stock_amount("20250320")
 
     # date_all = Stock_Analysis.search_date()
     # # print(len(date_all))
