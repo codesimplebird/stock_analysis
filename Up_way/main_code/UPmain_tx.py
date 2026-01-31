@@ -147,6 +147,7 @@ if __name__ == "__main__":
         executor.map(stock.run, stock_list)
 
     print(f"耗时{time.time()-start}")
+    
 
     # stock_individual_basic_info_xq_df = ak.stock_individual_basic_info_xq(
     #     symbol="SH601127"
