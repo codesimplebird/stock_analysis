@@ -236,8 +236,8 @@ if __name__ == "__main__":
 
         stop_codes = stock.research_stop_code()
         print("上次停止数为%s", stop_codes)
-        stock_code_Df_noiloc = stock.fitch_stock_code()
-        stock_code_Df = stock_code_Df_noiloc[stop_codes:]
+        stock_code_Df_all = stock.fitch_stock_code()
+        stock_code_Df = stock_code_Df_all[stop_codes:]
 
         print("获取股代码完成")
         stock_list = list(
@@ -260,7 +260,7 @@ if __name__ == "__main__":
         print("获取股代码失败,请检查数据源")
         exit(0)
 
-    print("开始获取股票数据")
+    print("开始获取股票数据,写入表头")
     with open(RESULT_PATH, "w") as f:
 
         f.write(
