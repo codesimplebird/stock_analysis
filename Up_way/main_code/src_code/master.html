@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CYBER-DECK V14</title>
+
+    <!-- 优化 1：异步非阻塞字体加载，告别白屏死等 -->
+    <link rel="preconnect" href="https://fonts.geekzu.org" crossorigin>
+    <link rel="preload" as="style"
+          href="https://fonts.geekzu.org/css2?family=JetBrains+Mono:wght@400;700&family=Noto+Sans+SC:wght@300;400;700&display=swap">
+    <link rel="stylesheet"
+          href="https://fonts.geekzu.org/css2?family=JetBrains+Mono:wght@400;700&family=Noto+Sans+SC:wght@300;400;700&display=swap"
+          media="print" onload="this.media='all'">
+
+    <link rel="icon"
+          href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚛️</text></svg>">
+    <style>
+        /* --- 全局变量适配 --- */
+        :root {
+            --neon: #00f2ff;
+            --neon-alt: #9d50ff;
+            --bg: #050508;
+            --panel: rgba(15, 15, 25, 0.92);
+            --border: rgba(0, 242, 255, 0.3);
+            --text-main: #ffffff;
+            --text-sub: #a1a1aa;
+            --grid-color: rgba(0, 242, 255, 0.05);
+        }
+
+        [data-theme="light"] {
+            --neon: #0055ff;
+            --neon-alt: #6200ea;
+            --bg: #f0f3f7;
+            --panel: rgba(255, 255, 255, 0.9);
+            --border: rgba(0, 85, 255, 0.2);
+            --text-main: #1a1a2e;
+            --text-sub: #555555;
+            --grid-color: rgba(0, 0, 0, 0.05);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            cursor: none !important;
+        }
+
+        body {
+            font-family: 'Noto Sans SC', 'JetBrains Mono', sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            transition: background 0.5s ease, color 0.5s ease;
+        }
+
+        /* --- 零延迟霓虹光标 --- */
+        #neon-cursor {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 22px;
+            height: 22px;
+            z-index: 10000;
+            pointer-events: none;
+            transform: translate3d(0, 0, 0);
+            filter: drop-shadow(0 0 8px var(--neon));
+        }
+
+        #neon-cursor svg {
+            fill: var(--neon);
+            width: 100%;
+            height: 100%;
+            transition: fill 0.3s;
+        }
+
+        .click-ripple {
+            position: fixed;
+            border: 2px solid var(--neon);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 9999;
+            transform: translate(-50%, -50%);
+            animation: ripple-ani 0.5s ease-out forwards;
+        }
+
+        @keyframes ripple-ani {
+            0% {
+                width: 0;
+                height: 0;
+                opacity: 1;
+            }
+
+            100% {
+                width: 80px;
+                height: 80px;
+                opacity: 0;
+            }
+        }
+
+        /* --- 背景装饰 --- */
+        .bg-grid {
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            background-image: linear-gradient(var(--grid-color) 1px, transparent 1px),
+                linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+            background-size: 50px 50px;
+            mask-image: radial-gradient(circle, black, transparent 90%);
+        }
+
+        /* --- 侧边栏 --- */
+        .sidebar {
+            width: 320px;
+            background: var(--panel);
+            backdrop-filter: blur(40px);
+            border-right: 1px solid var(--border);
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            z-index: 100;
+        }
+
+        .side-panel {
+            background: rgba(128, 128, 128, 0.05);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 18px;
+            border-left: 4px solid var(--neon);
+        }
+
+        .clock-wrap {
+            font-family: 'JetBrains Mono', monospace;
+            text-align: center;
+        }
+
+        .clock-time {
+            font-size: 3.2rem;
+            font-weight: 700;
+            line-height: 1;
+        }
+
+        .clock-sec {
+            font-size: 1.8rem;
+            color: var(--neon);
+            text-shadow: 0 0 10px var(--neon);
+        }
+
+        .clock-date {
+            font-size: 0.8rem;
+            color: var(--text-sub);
+            margin-top: 8px;
+            letter-spacing: 1px;
+        }
+
+        .stat-label {
+            font-size: 0.7rem;
+            color: var(--text-sub);
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+            font-family: 'JetBrains Mono';
+        }
+
+        .bar-outer {
+            height: 4px;
+            background: rgba(128, 128, 128, 0.1);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-bottom: 12px;
+        }
+
+        .bar-inner {
+            height: 100%;
+            background: var(--neon);
+            box-shadow: 0 0 8px var(--neon);
+            transition: width 0.6s;
+        }
+
+        /* --- 右侧看板 (列式清单) --- */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 30px 40px;
+            overflow-x: auto;
+        }
+
+        .search-container {
+            width: 100%;
+            max-width: 800px;
+            margin-bottom: 30px;
+        }
+
+        .search-bar {
+            width: 100%;
+            padding: 18px 25px;
+            font-size: 1.2rem;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 15px;
+            color: var(--text-main);
+            backdrop-filter: blur(10px);
+            outline: none;
+            transition: 0.3s;
+        }
+
+        .search-bar:focus {
+            border-color: var(--neon);
+            box-shadow: 0 0 20px var(--neon);
+        }
+
+        #render-area {
+            display: flex;
+            gap: 35px;
+            height: 100%;
+            align-items: flex-start;
+        }
+
+        .cat-column {
+            min-width: 320px;
+            display: flex;
+            flex-direction: column;
+            animation: slideIn 0.6s ease-out both;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(40px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .cat-header {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            color: var(--neon-alt);
+            margin-bottom: 20px;
+            padding-left: 10px;
+            border-left: 4px solid var(--neon-alt);
+            letter-spacing: 2px;
+        }
+
+        .links-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .link-card {
+            background: rgba(128, 128, 128, 0.03);
+            border: 1px solid rgba(128, 128, 128, 0.08);
+            border-radius: 16px;
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            text-decoration: none;
+            transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+        }
+
+        .link-card:hover {
+            background: rgba(0, 210, 255, 0.08);
+            border-color: var(--neon);
+            transform: translateX(12px);
+            box-shadow: -10px 10px 25px rgba(0, 0, 0, 0.2);
+        }
+
+        /* 巨型图标 */
+        .icon-wrap {
+            width: 64px;
+            height: 64px;
+            flex-shrink: 0;
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .link-icon {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .icon-fallback {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #fff;
+            font-family: 'JetBrains Mono';
+        }
+
+        .link-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .link-name {
+            color: var(--text-main);
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .link-url {
+            color: var(--text-sub);
+            font-size: 0.7rem;
+            font-family: 'JetBrains Mono';
+        }
+
+        /* 主题切换 */
+        .theme-toggle {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            border: 1px solid var(--border);
+            background: var(--panel);
+            color: var(--neon);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1001;
+            font-size: 20px;
+            transition: all 0.3s;
+        }
+
+        .theme-toggle:hover {
+            box-shadow: 0 0 15px var(--neon);
+            transform: scale(1.1);
+        }
+    </style>
+</head>
+
+<body data-theme="dark">
+
+    <div id="neon-cursor">
+        <svg viewBox="0 0 32 32">
+            <path d="M8 2 L24 16 L16 16 L22 28 L18 30 L12 18 L8 22 Z" />
+        </svg>
+    </div>
+
+    <div class="bg-grid"></div>
+    <button class="theme-toggle" onclick="toggleTheme()">🌓</button>
+
+    <aside class="sidebar">
+        <div class="side-panel clock-wrap">
+            <div style="font-size: 0.7rem; color: var(--neon); letter-spacing: 2px;">SECURE_TIME</div>
+            <div>
+                <span class="clock-time" id="time-hm">00:00</span>
+                <span class="clock-sec" id="time-s">00</span>
+            </div>
+            <div class="clock-date" id="date-str">BOOTING...</div>
+        </div>
+
+        <div class="side-panel">
+            <div class="stat-label"><span>WEATHER</span><span id="weather-desc">LOADING</span></div>
+            <div style="font-size: 2rem; font-weight: bold; color: var(--neon); margin: 5px 0;" id="temp-val">--°C</div>
+
+            <div class="stat-label"><span>POWER</span><span id="batt-val">100%</span></div>
+            <div class="bar-outer">
+                <div class="bar-inner" id="batt-bar" style="width: 100%;"></div>
+            </div>
+
+            <div class="stat-label"><span>WEEK_FLOW</span><span id="week-val">0%</span></div>
+            <div class="bar-outer">
+                <div class="bar-inner" id="week-bar" style="width: 0%;"></div>
+            </div>
+        </div>
+
+        <div class="side-panel" style="flex: 1; display: flex; flex-direction: column;">
+            <div class="stat-label" style="color: var(--neon-alt);">[ MEMO_PAD ]</div>
+            <input type="text" id="todo-in"
+                   style="width:100%; background:transparent; border:none; border-bottom:1px solid var(--border); color:var(--text-main); font-size:0.8rem; padding:10px 0; outline:none;"
+                   placeholder="+ Add new note...">
+            <div id="todo-list" style="margin-top: 10px; font-size: 0.75rem; overflow-y:auto; flex:1;"></div>
+        </div>
+    </aside>
+
+    <main class="main-content">
+        <div class="search-container">
+            <input type="text" class="search-bar" id="search-in" placeholder="Query Global Intelligence..."
+                   autocomplete="off">
+        </div>
+
+        <div id="render-area"></div>
+    </main>
+
+    <script>
+        const config = {
+            categories: [
+                { id: 'media', name: 'MEDIA_STATIONS' },
+                { id: 'ai', name: 'NEURAL_INTELLIGENCE' },
+                { id: 'dev', name: 'FORGE_WORKSHOP' },
+                { id: 'social', name: 'SOCIAL_NEXUS' },
+                { id: 'search', name: 'SEARCH_ENGINES' }
+            ],
+            links: [
+                // --- MEDIA_STATIONS (影音娱乐) ---
+
+                { name: "Bilibili", url: "https://t.bilibili.com/", cat: "media", icon: "https://static.hdslb.com/images/favicon.ico" },
+                { name: "YouTube", url: "https://www.youtube.com", cat: "media", icon: "https://www.youtube.com/favicon.ico" },
+                { name: "Netflix", url: "https://www.netflix.com", cat: "media", icon: "https://www.netflix.com/favicon.ico" },
+                { name: "Twitch", url: "https://www.twitch.tv", cat: "media", icon: "https://th.bing.com/th/id/ODF.NGz4Api7uY8oq1SpbgkfcA?w=32&h=32&qlt=90&pcl=fffffc&o=6&pid=1.2" },
+                { name: "Spotify", url: "https://open.spotify.com", cat: "media", icon: "https://open.spotify.com/favicon.ico" },
+                { name: "Steam", url: "https://store.steampowered.com/", cat: "media", icon: "https://store.steampowered.com/favicon.ico" },
+                { name: "虎牙直播", url: "https://www.huya.com", cat: "media", icon: "https://a.msstatic.com/huya/hd/h5/static-source/main/logo2.png" },
+
+                // --- NEURAL_INTELLIGENCE (AI 助手) ---
+                { name: "AI Studio", url: "https://aistudio.google.com", cat: "ai", icon: "https://www.gstatic.com/aistudio/zero-state/promo_chat_url_context.png" },
+                { name: "通义千问", url: "https://chat.qwen.ai/", cat: "ai", icon: "https://th.bing.com/th?id=OCBZA.B73F50E19DFEAB57CA111B36001945C0C87797D5E5AC215BCAEA773DF9D57E6FA&pid=BZA&rs=0" },
+                { name: "ChatGPT", url: "https://chatgpt.com", cat: "ai", icon: "https://chatgpt.com/favicon.ico" },
+                { name: "DeepSeek", url: "https://chat.deepseek.com", cat: "ai", icon: "https://www.deepseek.com/favicon.ico" },
+                { name: "Claude", url: "https://claude.ai", cat: "ai", icon: "https://claude.ai/favicon.ico" },
+                { name: "Gemini", url: "https://gemini.google.com", cat: "ai", icon: "https://www.gstatic.com/lamda/images/gemini_sparkle_aurora_33f86dc0c0257da337c63.svg" },
+                { name: "Kimi", url: "https://kimi.moonshot.cn", cat: "ai", icon: "https://kimi.moonshot.cn/favicon.ico" },
+                { name: "Midjourney", url: "https://www.midjourney.com", cat: "ai", icon: "https://www.midjourney.com/favicon.ico" },
+
+                // --- FORGE_WORKSHOP (开发/工具) ---
+                { name: "GitHub", url: "https://github.com", cat: "dev", icon: "https://github.githubassets.com/favicons/favicon.png" },
+                { name: "Vercel", url: "https://vercel.com", cat: "dev", icon: "https://assets.vercel.com/image/upload/front/favicon/vercel/favicon.ico" },
+                { name: "Notion", url: "https://www.notion.so", cat: "dev", icon: "https://www.notion.so/images/favicon.ico" },
+                { name: "Figma", url: "https://www.figma.com", cat: "dev", icon: "https://www.figma.com/favicon.ico" },
+                { name: "Canva", url: "https://www.canva.com", cat: "dev", icon: "https://www.canva.com/favicon.ico" },
+                { name: "Stack Overflow", url: "https://stackoverflow.com", cat: "dev", icon: "https://cdn.sstatic.net/Sites/stackoverflow/Img/favicon.ico" },
+                { name: "OpenWrt", url: "http://192.168.30.100", cat: "dev", icon: "https://openwrt.org/_media/favicon.ico" },
+
+                // --- SOCIAL_NEXUS (社交网络) ---
+                { name: "Gmail", url: "https://mail.google.com", cat: "social", icon: "https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico" },
+                { name: "X / Twitter", url: "https://x.com", cat: "social", icon: "https://abs.twimg.com/favicons/twitter.2.ico" },
+                { name: "Discord", url: "https://discord.com", cat: "social", icon: "https://discord.com/favicon.icohttps://th.bing.com/th/id/ODF.xXp47-dBXlzjKRnoX3v0kQ?w=32&h=32&qlt=90&pcl=fffffa&o=6&pid=1.2" },
+                { name: "Reddit", url: "https://www.reddit.com", cat: "social", icon: "https://www.redditstatic.com/desktop2x/img/favicon/favicon-32x32.png" },
+                { name: "知乎", url: "https://www.zhihu.com", cat: "social", icon: "https://static.zhihu.com/heifetz/favicon.ico" },
+                { name: "微博", url: "https://weibo.com", cat: "social", icon: "https://weibo.com/favicon.ico" },
+                { name: "Telegram", url: "https://web.telegram.org", cat: "social", icon: "https://web.telegram.org/favicon.ico" },
+
+                // --- SEARCH_ENGINES (搜索引擎) ---
+                { name: "Google", url: "https://www.google.com", cat: "search", icon: "https://www.google.com/images/branding/googleg/1x/googleg_standard_color_128dp.png" },
+                { name: "Bing", url: "https://www.bing.com", cat: "search", icon: "https://www.bing.com/favicon.ico" },
+                { name: "DuckDuckGo", url: "https://duckduckgo.com", cat: "search", icon: "https://duckduckgo.com/favicon.ico" },
+                { name: "百度", url: "https://www.baidu.com", cat: "search", icon: "https://www.baidu.com/favicon.ico" },
+                { name: "WolframAlpha", url: "https://www.wolframalpha.com", cat: "search", icon: "https://www.wolframalpha.com/_cdn/favicon.ico" }
+            ]
+        };
+        // --- 深度主题切换 ---
+        function toggleTheme() {
+            const current = document.body.getAttribute('data-theme');
+            const target = current === 'dark' ? 'light' : 'dark';
+            document.body.setAttribute('data-theme', target);
+            localStorage.setItem('cyber-v14-theme', target);
+        }
+
+        // --- 渲染 (64px 看板单列) ---
+        function render(kw = '') {
+            const area = document.getElementById('render-area');
+            area.innerHTML = '';
+            config.categories.forEach(cat => {
+                const list = config.links.filter(l => l.cat === cat.id && l.name.toLowerCase().includes(kw.toLowerCase()));
+                if (list.length > 0) {
+                    const col = document.createElement('div');
+                    col.className = 'cat-column';
+                    col.innerHTML = `
+                        <div class="cat-header">// ${cat.name}</div>
+                        <div class="links-list">
+                            ${list.map(l => `
+                                <a href="${l.url}" class="link-card" target="_self">
+                                    <div class="icon-wrap">${getIcon(l)}</div>
+                                    <div class="link-info">
+                                        <span class="link-name">${l.name}</span>
+                                        <span class="link-url">${new URL(l.url).hostname}</span>
+                                    </div>
+                                </a>
+                            `).join('')}
+                        </div>
+                    `;
+                    area.appendChild(col);
+                }
+            });
+        }
+
+        function getIcon(link) {
+            const hashColor = (s) => `hsl(${Math.abs(s.split('').reduce((a, b) => a + b.charCodeAt(0), 0) % 360)}, 60%, 50%)`;
+            // 优化 2：依然保持 lazy 懒加载，防阻塞
+            return `<img src="${link.icon}" class="link-icon" loading="lazy" decoding="async" onerror="this.outerHTML='<div class=\'icon-fallback\' style=\'background:${hashColor(link.name)}\'>${link.name[0].toUpperCase()}</div>'">`;
+        }
+
+        // --- 系统同步 ---
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('time-hm').innerText = now.toTimeString().split(' ')[0].substring(0, 5);
+            document.getElementById('time-s').innerText = String(now.getSeconds()).padStart(2, '0');
+            document.getElementById('date-str').innerText = now.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).toUpperCase();
+            const day = now.getDay() === 0 ? 7 : now.getDay();
+            const per = Math.round((day / 7) * 100);
+            document.getElementById('week-val').innerText = per + '%';
+            document.getElementById('week-bar').style.width = per + '%';
+        }
+
+        async function updateWeather() {
+            try {
+                const res = await fetch('https://wttr.in/?format=j1');
+                const data = await res.json();
+                const cur = data.current_condition[0];
+                document.getElementById('temp-val').innerText = `${cur.temp_C}°C`;
+                document.getElementById('weather-desc').innerText = cur.weatherDesc[0].value.toUpperCase();
+            } catch (e) { document.getElementById('weather-desc').innerText = "OFFLINE"; }
+        }
+
+        // --- 光标锁定 ---
+        const cursor = document.getElementById('neon-cursor');
+        document.addEventListener('mousemove', e => cursor.style.transform = `translate3d(${e.clientX}px, ${e.clientY}px, 0)`);
+        document.addEventListener('mousedown', e => {
+            const r = document.createElement('div');
+            r.className = 'click-ripple';
+            r.style.left = e.clientX + 'px'; r.style.top = e.clientY + 'px';
+            document.body.appendChild(r);
+            setTimeout(() => r.remove(), 500);
+        });
+
+        // --- 初始化 ---
+        function init() {
+            // 优化 3：非网络依赖的任务优先瞬间执行，画出 UI 骨架
+            updateClock(); setInterval(updateClock, 1000);
+
+            if (navigator.getBattery) navigator.getBattery().then(b => {
+                const fn = () => { document.getElementById('batt-val').innerText = Math.round(b.level * 100) + '%'; document.getElementById('batt-bar').style.width = b.level * 100 + '%'; };
+                fn(); b.addEventListener('levelchange', fn);
+            });
+
+            const tIn = document.getElementById('todo-in'), tList = document.getElementById('todo-list');
+            const save = () => localStorage.setItem('v14-memos', JSON.stringify(Array.from(tList.querySelectorAll('.txt')).map(s => s.innerText)));
+            const add = (t) => {
+                const d = document.createElement('div'); d.style.padding = '8px 0'; d.style.borderBottom = '1px solid rgba(255,255,255,0.05)'; d.style.display = 'flex'; d.style.justifyContent = 'space-between';
+                d.innerHTML = `<span class="txt">${t}</span><span style="opacity:0.3" onclick="this.parentElement.remove();save();">✕</span>`;
+                tList.appendChild(d);
+            };
+            tIn.addEventListener('keypress', e => { if (e.key === 'Enter' && tIn.value.trim()) { add(tIn.value.trim()); tIn.value = ''; save(); } });
+            JSON.parse(localStorage.getItem('v14-memos') || '[]').forEach(add);
+            document.getElementById('search-in').addEventListener('input', e => render(e.target.value));
+
+            const savedTheme = localStorage.getItem('cyber-v14-theme');
+            if (savedTheme) document.body.setAttribute('data-theme', savedTheme);
+
+            // 优化 4：核心 DOM 注入与外部 API 请求延迟 200ms，为骨架渲染让路
+            setTimeout(() => {
+                render();
+                updateWeather(); setInterval(updateWeather, 600000);
+            }, 200);
+        }
+
+        init();
+    </script>
+</body>
+
+</html>
