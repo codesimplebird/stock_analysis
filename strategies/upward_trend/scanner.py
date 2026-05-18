@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+# scanner.py
 from src_code import coreSearch as cs
 import akshare as ak
 import pandas as pd
@@ -6,18 +8,28 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import time
 import random
+import os
+
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.patches import Rectangle
 
 # 1. 获取股票代码
 # 2. 获取股票数据
 # 3. 处理数据
 # 4. 判断是否符合条件 条件1 近期30交易日没有涨停板和跌5%的交易日, 20日线向上
 
+# 项目根目录: strategies/upward_trend/
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(CURRENT_DIR, "data")
+RESULT_DIR = os.path.join(DATA_DIR, "upward_result")
+
 END_DATE = datetime.today().strftime("%Y%m%d")
 START_DATE = "20250102"
-RESULT_PATH = f"upward_result/{datetime.now().strftime('%Y%m%d')}.csv"
+RESULT_PATH = os.path.join(RESULT_DIR, f"{datetime.now().strftime('%Y%m%d')}.csv")
 
 MAX_WORKERS = 10  # 最大线程数
-STOCK_CSV_PATH = "stock_zh_a_spot_em.csv"
+STOCK_CSV_PATH = os.path.join(DATA_DIR, "stock_zh_a_spot_em.csv")
 
 UPWARD_LONG_DAYS = 30
 UPWARD_LONG_THRESHOLD = 23
@@ -42,7 +54,7 @@ class StockUpward:
     def fetch_stock_code():
         data = pd.read_csv(STOCK_CSV_PATH, encoding="gbk")
         data["代码"] = data["代码"].astype(str).str.zfill(6)
-        return data[["代码", "名称", "市盈率"]]
+        return data[["代码", "名称", "市盈率-动态"]]
 
     def search_stock(self, stock_code):
         try:
@@ -54,13 +66,15 @@ class StockUpward:
                 adjust="qfq",
                 timeout=2,
             )
+            return stock_data
         except Exception as e:
-            print(f"{stock_code}从东财获取失败")
-
-        return stock_data
+            print(f"{stock_code}从东财获取失败: {e}")
+            return None
 
     @staticmethod
     def process_dataframe(stock_data):
+        if stock_data is None or stock_data.empty:
+            return None
         recent_data = stock_data.iloc[-100:].copy()
         # stock_data200["MA5"] = (
         #     stock_data["收盘"].rolling(window=5, min_periods=1).mean()
@@ -117,8 +131,7 @@ class StockUpward:
 
         # 近期30交易日没有大幅度涨跌
         amplitude_ratio_20d = (
-            stock_data["收盘"].iloc[-20:].max()
-            - stock_data["收盘"].iloc[-20:].min()
+            stock_data["收盘"].iloc[-20:].max() - stock_data["收盘"].iloc[-20:].min()
         ) / stock_data["收盘"].iloc[-20:].min()
 
         if amplitude_ratio_20d > 0.25 or amplitude_ratio_20d < 0.05:
@@ -161,6 +174,67 @@ class StockUpward:
         latest_change = stock_data["涨跌幅"].iloc[-1:].values[0]
         return [True, amplitude_ratio_20d, latest_change]
 
+    @staticmethod
+    def plot_kline(stock_data, stock_code, stock_name):
+        save_dir = os.path.join(os.path.dirname(__file__), "kline_charts")
+        os.makedirs(save_dir, exist_ok=True)
+
+        df = stock_data.tail(130).copy()
+        df["日期"] = pd.to_datetime(df["日期"])
+        df["MA20"] = df["收盘"].rolling(window=20, min_periods=1).mean()
+
+        fig, ax = plt.subplots(figsize=(16, 8))
+        fig.patch.set_facecolor("#f0f0f0")
+        ax.set_facecolor("#ffffff")
+
+        dates = mdates.date2num(df["日期"].dt.date)
+        candle_width = (dates[-1] - dates[0]) / len(dates) * 0.6
+
+        for i in range(len(df)):
+            o, c, h, l = (
+                df["开盘"].iloc[i],
+                df["收盘"].iloc[i],
+                df["最高"].iloc[i],
+                df["最低"].iloc[i],
+            )
+            d = dates[i]
+            color = "#e74c3c" if c >= o else "#2ecc71"
+            body_bottom = min(o, c)
+            body_height = abs(c - o) or 0.01
+
+            ax.add_patch(
+                Rectangle(
+                    (d - candle_width / 2, body_bottom),
+                    candle_width,
+                    body_height,
+                    facecolor=color,
+                    edgecolor=color,
+                    linewidth=0.5,
+                )
+            )
+            ax.plot([d, d], [l, h], color=color, linewidth=1.2)
+
+        ax.plot(
+            dates, df["MA20"], color="#0000ff", linewidth=1.8, label="MA20", zorder=3
+        )
+
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d"))
+        ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+        fig.autofmt_xdate(rotation=45)
+
+        ax.set_title(
+            f"{stock_code} {stock_name}  K线图", fontsize=16, fontweight="bold"
+        )
+        ax.set_ylabel("价格", fontsize=12)
+        ax.grid(True, alpha=0.3, linestyle="--")
+        ax.legend(fontsize=12, loc="upper left")
+
+        file_path = os.path.join(save_dir, f"{stock_code}{stock_name}.png")
+        plt.tight_layout()
+        plt.savefig(file_path, dpi=150, bbox_inches="tight")
+        plt.close()
+        print(f"  K线图已保存: {file_path}")
+
     def run(self, stock):
         time.sleep(random.uniform(0.1, 0.2))
 
@@ -171,7 +245,10 @@ class StockUpward:
 
         # print(f"{code,name}")
         stock_data = self.search_stock(code)
-        with open("./upward_result/stop_code.txt", "w") as f_code:
+        if stock_data is None or stock_data.empty:
+            return 0
+
+        with open(os.path.join(RESULT_DIR, "stop_code.txt"), "w") as f_code:
             f_code.write(str(index))
             f_code.close()
         try:
@@ -179,15 +256,11 @@ class StockUpward:
         except Exception as e:
             print(f" 数据处理失败\n {e}")
             return 0
+        if processed_data is None:
+            return 0
         criteria_result = self.check_criteria(processed_data)
         if isinstance(criteria_result, list):
-            # print(process_Data)
-            # try:
-            #     stock_trade_info = ak.stock_individual_info_em(symbol=code)
-            #     industry = stock_trade_info[6]
-
-            # except Exception as e:
-            #     print(f"获取行业信息失败: ")
+            self.plot_kline(stock_data, code, name)
 
             industry = "未知行业"
             print(f"{code},{name} 符合条件,行业:{industry},市盈率:{pe_ratio}")
@@ -204,7 +277,9 @@ class StockUpward:
     @staticmethod
     def load_checkpoint():
         try:
-            with open("./upward_result/stop_code.txt", "r", encoding="utf-8") as f:
+            with open(
+                os.path.join(RESULT_DIR, "stop_code.txt"), "r", encoding="utf-8"
+            ) as f:
                 last_index = f.readlines()
                 last_index = int(last_index[0].strip())
         except FileNotFoundError:
@@ -262,7 +337,7 @@ if __name__ == "__main__":
     import shutil
 
     try:
-        shutil.copy(RESULT_PATH, "stock_upward.csv")
+        shutil.copy(RESULT_PATH, os.path.join(DATA_DIR, "stock_upward.csv"))
         print(f"文件已成功复制并重命名为 stock_upward.csv")
     except IOError as e:
         print(f"无法复制文件. 错误: {e}")

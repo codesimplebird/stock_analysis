@@ -9,6 +9,11 @@ import time
 # 2. 获取股票数据
 # 3. 处理数据
 
+import os
+
+# 数据目录
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(CURRENT_DIR, "data")
 
 END_DATE = datetime.today().strftime("%Y%m%d")
 START_DATE = "20240901"
@@ -26,7 +31,7 @@ class stock_upward:
 
     @staticmethod
     def fitch_stock_code():
-        data = pd.read_csv("20250303.csv", encoding="gbk")
+        data = pd.read_csv(os.path.join(DATA_DIR, "20250303.csv"), encoding="gbk")
         data["代码"] = data["代码tx"].astype(str).str.zfill(6)
         return data[["代码", "名称"]]
 
@@ -126,7 +131,7 @@ class stock_upward:
         if self.rm_stop_and_down(stock_data100):
             print(f"{code,name} 符合条件")
 
-            with open("stock_upward.csv", "a+") as f:
+            with open(os.path.join(DATA_DIR, "stock_upward.csv"), "a+") as f:
                 f.write(f"{code},{name},{self.change_pct}\n")
             return 0
         return 0
@@ -140,7 +145,7 @@ if __name__ == "__main__":
     print("获取股代码完成")
     stock_list = list(zip(stock_code_Df["代码"], stock_code_Df["名称"]))
     print("开始获取股票数据")
-    with open("stock_upward.csv", "a+") as f:
+    with open(os.path.join(DATA_DIR, "stock_upward.csv"), "a+") as f:
         f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"代码,名字,近期涨跌幅\n")
     with ThreadPoolExecutor(max_workers=5) as executor:

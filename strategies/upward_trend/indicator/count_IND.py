@@ -1,6 +1,9 @@
+import os
 import tushare as ts
 import akshare as ak
 from concurrent.futures import ThreadPoolExecutor
+
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # # 设置 Tushare 的 token（需要注册 Tushare 账号获取）
 
@@ -77,7 +80,7 @@ class Stock_Analysis:
         top_5_percent_turnover = top_5_percent_stocks["amount"].sum()
         total_turnover = df_sorted["amount"].sum()
         turnover_ratio = top_5_percent_turnover / total_turnover
-        with open("拥挤度数据.csv", "a+") as f:
+        with open(os.path.join(CURRENT_DIR, "拥挤度数据.csv"), "a+") as f:
             f.write(
                 f"{trade_date},{total_stocks},{top_5_percent_count},{turnover_ratio.round(4)}\n"
             )
