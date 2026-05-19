@@ -21,9 +21,11 @@ from PyQt5.QtWidgets import (
     QProgressBar, QTextEdit, QTabWidget, QMessageBox,
     QFileDialog, QComboBox, QCheckBox, QFrame, QAbstractItemView,
     QStatusBar, QMenuBar, QAction, QToolBar,
+    QGraphicsOpacityEffect,
 )
 from PyQt5.QtCore import (
     Qt, QThread, pyqtSignal, QTimer, QSize, QMutex, QMutexLocker,
+    QPropertyAnimation, QEasingCurve,
 )
 from PyQt5.QtGui import (
     QFont, QPixmap, QIcon, QTextCursor, QPalette, QColor,
@@ -65,8 +67,22 @@ class ScanWorker(QThread):
         self._engine = StockUpward()
         self._engine.start_date = params.get("start_date", "20250102")
         self._engine.end_date = params.get("end_date", datetime.today().strftime("%Y%m%d"))
+        
+        # 同步 UI 传入的阈值参数到 StockUpward 实例
+        if "upward_long_days" in params:
+            self._engine.upward_long_days = params["upward_long_days"]
+        if "upward_long_threshold" in params:
+            self._engine.upward_long_threshold = params["upward_long_threshold"]
+        if "upward_short_days" in params:
+            self._engine.upward_short_days = params["upward_short_days"]
+        if "upward_short_threshold" in params:
+            self._engine.upward_short_threshold = params["upward_short_threshold"]
+        if "data_offset" in params:
+            self._engine.data_offset = params["data_offset"]
+            
         self._matched_stocks = []
         self._stop_flag = False
+        self._scan_start_time = time.time()
 
     def stop(self):
         self._stop_flag = True
@@ -83,6 +99,7 @@ class ScanWorker(QThread):
 
     # ------------------------------------------------------------------
     def _do_scan(self):
+        self._scan_start_time = time.time()  # 确保扫描开始时间正确初始化
         engine = self._engine
 
         # 1. 加载股票列表
@@ -198,8 +215,9 @@ class ScanWorker(QThread):
 
             amplitude, change_pct = criteria[1], criteria[2]
 
-            # 绘制 K 线图
-            engine.plot_kline(stock_data, code, name)
+            # 绘制 K 线图 (使用锁确保 Matplotlib 画图在多线程环境下的线程安全)
+            with lock:
+                engine.plot_kline(stock_data, code, name)
 
             return {
                 "code": code,
@@ -347,6 +365,14 @@ class MainWindow(QMainWindow):
         self._matched_count = 0
         self._init_ui()
         self._connect_signals()
+        
+        # 自动加载断点索引
+        try:
+            checkpoint = StockUpward.load_checkpoint()
+            self.spin_start_idx.setValue(checkpoint)
+            self._append_log(f"已自动加载断点索引: {checkpoint}")
+        except Exception as e:
+            print(f"自动加载断点索引失败: {e}")
 
     # ------------------------------------------------------------------
     def _init_ui(self):
@@ -459,6 +485,11 @@ class MainWindow(QMainWindow):
         self.btn_load.setMinimumHeight(32)
         btn_layout.addWidget(self.btn_load)
 
+        # 打开数据目录
+        self.btn_open_dir = QPushButton("📂 打开数据目录")
+        self.btn_open_dir.setMinimumHeight(32)
+        btn_layout.addWidget(self.btn_open_dir)
+
         btn_layout.addStretch()
 
         # 组装左侧
@@ -496,7 +527,6 @@ class MainWindow(QMainWindow):
         self.table_result.horizontalHeader().setStretchLastSection(True)
         self.table_result.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.table_result.verticalHeader().setVisible(False)
-        self.table_result.itemClicked.connect(self._on_result_clicked)
 
         tab_layout.addWidget(self.lbl_result_count)
         tab_layout.addWidget(self.table_result, 1)
@@ -507,7 +537,7 @@ class MainWindow(QMainWindow):
         kline_layout = QVBoxLayout(tab_kline)
         kline_layout.setContentsMargins(4, 4, 4, 4)
 
-        self.lbl_kline_title = QLabel("点击上方结果行查看 K 线图")
+        self.lbl_kline_title = QLabel("点击右侧「查看K线」按钮查看 K 线图")
         self.lbl_kline_title.setAlignment(Qt.AlignCenter)
         self.lbl_kline_title.setStyleSheet("font-size: 13px; color: #666666; padding: 8px;")
 
@@ -556,6 +586,7 @@ class MainWindow(QMainWindow):
         self.btn_start.clicked.connect(self._on_start_scan)
         self.btn_stop.clicked.connect(self._on_stop_scan)
         self.btn_load.clicked.connect(self._on_load_result)
+        self.btn_open_dir.clicked.connect(self._on_open_data_dir)
 
     # ==============================================================
     # 槽函数
@@ -572,6 +603,11 @@ class MainWindow(QMainWindow):
             "max_workers": self.spin_workers.value(),
             "start_index": self.spin_start_idx.value(),
             "end_date": datetime.today().strftime("%Y%m%d"),
+            "upward_long_days": self.spin_long_days.value(),
+            "upward_long_threshold": self.spin_long_thresh.value(),
+            "upward_short_days": self.spin_short_days.value(),
+            "upward_short_threshold": self.spin_short_thresh.value(),
+            "data_offset": 0,  # 默认对应 scanner 中的 DATA_OFFSET 为 0
         }
 
         # 清空之前的结果
@@ -623,7 +659,7 @@ class MainWindow(QMainWindow):
 
         # 操作按钮 (查看K线)
         btn_view = QPushButton("查看K线")
-        btn_view.clicked.connect(lambda _, c=info["code"], n=info["name"]: self._show_kline(c, n))
+        btn_view.clicked.connect(lambda _, c=info["code"], n=info["name"]: self._show_kline(c, n, show_toast=True))
         self.table_result.setCellWidget(row, 6, btn_view)
 
         self._matched_count += 1
@@ -641,6 +677,21 @@ class MainWindow(QMainWindow):
         self._append_log(f"[错误] {msg}")
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
+
+    def _on_open_data_dir(self):
+        """打开数据及结果保存目录。"""
+        import platform
+        import subprocess
+        try:
+            if platform.system() == "Windows":
+                os.startfile(DATA_DIR)
+            elif platform.system() == "Darwin":  # macOS
+                subprocess.Popen(["open", DATA_DIR])
+            else:  # Linux
+                subprocess.Popen(["xdg-open", DATA_DIR])
+            self._append_log(f"已打开数据目录: {DATA_DIR}")
+        except Exception as e:
+            self._append_log(f"无法打开目录: {e}")
 
     # --------------------------------------------------------------
     def _on_load_result(self):
@@ -670,22 +721,15 @@ class MainWindow(QMainWindow):
             if len(row_data) >= 2:
                 code, name = row_data[0].strip(), row_data[1].strip()
                 btn_view = QPushButton("查看K线")
-                btn_view.clicked.connect(lambda _, c=code, n=name: self._show_kline(c, n))
+                btn_view.clicked.connect(lambda _, c=code, n=name: self._show_kline(c, n, show_toast=True))
                 self.table_result.setCellWidget(row, 6, btn_view)
 
         self._matched_count = len(rows)
         self.lbl_result_count.setText(f"历史结果: {len(rows)} 条")
 
     # --------------------------------------------------------------
-    def _on_result_clicked(self, item):
-        """点击表格行时，在K线标签页显示对应的图。"""
-        row = item.row()
-        code_item = self.table_result.item(row, 0)
-        name_item = self.table_result.item(row, 1)
-        if code_item and name_item:
-            self._show_kline(code_item.text(), name_item.text())
 
-    def _show_kline(self, code, name):
+    def _show_kline(self, code, name, show_toast=False):
         """从 kline_charts 目录加载对应 PNG 显示。"""
         kline_dir = os.path.join(CURRENT_DIR, "kline_charts")
         candidates = [
@@ -697,30 +741,93 @@ class MainWindow(QMainWindow):
                 self._display_image(path, f"{code} {name} K线图")
                 return
 
-        self._append_log(f"未找到 {code} {name} 的 K线图文件")
-        self._clear_kline(f"未找到 {code} {name} 的 K线图，请先运行扫描")
+        msg = f"未找到 {code} {name} 的 K线图"
+        self._append_log(msg)
+        self._clear_kline(f"{msg}，请先运行扫描")
+        if show_toast:
+            self.show_toast(msg)
 
-    def _display_image(self, path, title):
+    def _display_image(self, path, title=None):
         """在 K线标签页显示图片。"""
-        pixmap = QPixmap(path)
-        if pixmap.isNull():
-            self._clear_kline(f"无法加载图片: {path}")
-            return
+        self._current_image_path = path
+        if title:
+            self._current_image_title = title
+            self.lbl_kline_title.setText(f"📈 {title}")
+        
+        self._update_kline_display()
+        self.tabs.setCurrentIndex(1)  # 切换到K线标签页
 
-        # 缩放适应显示区域
+    def _update_kline_display(self):
+        """根据当前 label 尺寸动态自适应缩放显示 K线图片。"""
+        if not getattr(self, "_current_image_path", None):
+            return
+        pixmap = QPixmap(self._current_image_path)
+        if pixmap.isNull():
+            return
+            
         max_w = self.lbl_kline_image.width() or 600
         max_h = self.lbl_kline_image.height() or 400
-        scaled = pixmap.scaled(max_w, max_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.lbl_kline_image.setPixmap(scaled)
-        self.lbl_kline_title.setText(f"📈 {title}")
-        self._current_image_path = path
-        self.tabs.setCurrentIndex(1)  # 切换到K线标签页
+        
+        # 留白 4px 避免拉大窗口时触发无限调整的布局死循环
+        if max_w > 10 and max_h > 10:
+            scaled = pixmap.scaled(max_w - 4, max_h - 4, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.lbl_kline_image.setPixmap(scaled)
 
     def _clear_kline(self, msg=None):
         """清空 K线 显示。"""
         self.lbl_kline_image.clear()
-        self.lbl_kline_title.setText(msg or "点击结果行查看 K 线图")
+        self.lbl_kline_title.setText(msg or "点击右侧「查看K线」按钮查看 K 线图")
         self._current_image_path = None
+        self._current_image_title = None
+
+    def resizeEvent(self, event):
+        """窗口尺寸变动事件，动态触发 K线图自适应重绘缩放。"""
+        super().resizeEvent(event)
+        if getattr(self, "_current_image_path", None):
+            self._update_kline_display()
+
+    def show_toast(self, message):
+        """在窗口中央显示一个渐隐的气泡通知（Toast）。"""
+        toast = QLabel(message, self)
+        toast.setAlignment(Qt.AlignCenter)
+        toast.setStyleSheet("""
+            background-color: rgba(40, 40, 40, 220);
+            color: #ffffff;
+            border: 1px solid rgba(255, 255, 255, 30);
+            border-radius: 20px;
+            padding: 10px 24px;
+            font-family: 'Microsoft YaHei UI', sans-serif;
+            font-size: 13px;
+        """)
+        toast.adjustSize()
+        
+        # 居中定位
+        x = (self.width() - toast.width()) // 2
+        y = (self.height() - toast.height()) // 2
+        toast.move(x, y)
+        toast.show()
+        
+        # 渐隐动画
+        opacity_effect = QGraphicsOpacityEffect(toast)
+        toast.setGraphicsEffect(opacity_effect)
+        
+        anim = QPropertyAnimation(opacity_effect, b"opacity")
+        anim.setDuration(2500)  # 持续 2.5 秒
+        anim.setStartValue(1.0)
+        anim.setKeyValueAt(0.6, 1.0)  # 前 1.5 秒保持完全可见
+        anim.setEndValue(0.0)         # 后 1.0 秒渐隐
+        anim.setEasingCurve(QEasingCurve.OutQuad)
+        
+        # 自动销毁 Label
+        anim.finished.connect(toast.deleteLater)
+        
+        # 保持引用，防止垃圾回收
+        if not hasattr(self, "_toast_anims"):
+            self._toast_anims = []
+        self._toast_anims.append(anim)
+        anim.finished.connect(lambda: self._toast_anims.remove(anim) if anim in self._toast_anims else None)
+        
+        anim.start()
 
     # --------------------------------------------------------------
     def _append_log(self, msg):
