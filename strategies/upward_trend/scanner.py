@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # scanner.py
+from src_code import coreSearch as cs
 import akshare as ak
 import pandas as pd
 from datetime import datetime
@@ -8,8 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 import time
 import random
 import os
-import matplotlib
-matplotlib.use('Agg')  # 强制使用无 GUI 后端，确保在多线程及 GUI 中绘图的稳定性与效率
+
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
@@ -49,11 +49,6 @@ class StockUpward:
     def __init__(self):
         self.start_date = START_DATE
         self.end_date = END_DATE
-        self.upward_long_days = UPWARD_LONG_DAYS
-        self.upward_long_threshold = UPWARD_LONG_THRESHOLD
-        self.upward_short_days = UPWARD_SHORT_DAYS
-        self.upward_short_threshold = UPWARD_SHORT_THRESHOLD
-        self.data_offset = DATA_OFFSET
 
     @staticmethod
     def fetch_stock_code():
@@ -121,26 +116,16 @@ class StockUpward:
         ]
 
     def check_criteria(self, stock_data):
-        # 获取实例配置参数，以兼容实例属性和全局常量
-        upward_long_days = getattr(self, "upward_long_days", UPWARD_LONG_DAYS)
-        upward_long_threshold = getattr(self, "upward_long_threshold", UPWARD_LONG_THRESHOLD)
-        upward_short_days = getattr(self, "upward_short_days", UPWARD_SHORT_DAYS)
-        upward_short_threshold = getattr(self, "upward_short_threshold", UPWARD_SHORT_THRESHOLD)
-        data_offset = getattr(self, "data_offset", DATA_OFFSET)
-        
-        # 根据 data_offset 动态计算 slice_end
-        slice_end_local = -1 if data_offset == -1 else None
-
         # 20日线向上
         if (
             stock_data["MA20_is_upward"]
-            .iloc[-upward_long_days + data_offset : slice_end_local]
+            .iloc[-UPWARD_LONG_DAYS + DATA_OFFSET : slice_end]
             .sum()
-            < upward_long_threshold
+            < UPWARD_LONG_THRESHOLD
             or stock_data["MA20_is_upward"]
-            .iloc[-upward_short_days + data_offset : slice_end_local]
+            .iloc[-UPWARD_SHORT_DAYS + DATA_OFFSET : slice_end]
             .sum()
-            < upward_short_threshold
+            < UPWARD_SHORT_THRESHOLD
         ):
             return False
 
@@ -154,8 +139,8 @@ class StockUpward:
 
         # 最近一天没有涨跌扩大
         if (
-            stock_data["涨跌幅"].iloc[-1 + data_offset : slice_end_local].values[0] < -3
-            or stock_data["涨跌幅"].iloc[-5 + data_offset : slice_end_local].max() > 5
+            stock_data["涨跌幅"].iloc[-1 + DATA_OFFSET : slice_end].values[0] < -3
+            or stock_data["涨跌幅"].iloc[-5 + DATA_OFFSET : slice_end].max() > 5
         ):
             return False
 
@@ -163,12 +148,12 @@ class StockUpward:
         # 近二十天最低价与现价不超过20%上涨
         max_drawdown = (
             stock_data["收盘"].iloc[-20:].max()
-            - stock_data["收盘"].iloc[-1 + data_offset :].values[0]
-        ) / stock_data["收盘"].iloc[-1 + data_offset :].values[0]
+            - stock_data["收盘"].iloc[-1 + DATA_OFFSET :].values[0]
+        ) / stock_data["收盘"].iloc[-1 + DATA_OFFSET :].values[0]
         max_upside = (
-            stock_data["收盘"].iloc[-1 + data_offset :].values[0]
+            stock_data["收盘"].iloc[-1 + DATA_OFFSET :].values[0]
             - stock_data["收盘"].iloc[-20:].min()
-        ) / stock_data["收盘"].iloc[-1 + data_offset :].values[0]
+        ) / stock_data["收盘"].iloc[-1 + DATA_OFFSET :].values[0]
         # 最近20天没有大幅度下跌
         if max_drawdown > 0.05 or max_upside > 0.20:
             return False
@@ -357,3 +342,12 @@ if __name__ == "__main__":
     except IOError as e:
         print(f"无法复制文件. 错误: {e}")
 
+    # stock = cs.stock_zh_a_hist_zk(
+    #     period="daily",
+    #     symbol="000001",
+    #     start_date="20240901",
+    #     end_date="20250901",
+    #     adjust="qfq",
+    # )
+    # stock_upwards = StockUpward()
+    # stock_data100 = stock_upwards.run(["000001", "平安银行"])

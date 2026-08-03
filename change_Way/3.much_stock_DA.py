@@ -46,10 +46,10 @@ def main(stock_code,stock_name):
     F.close()
     if result[0].index.max() > (datetime.datetime.now() - datetime.timedelta(200)) and result[1]>1:
         print(f'{stock_code}符合条件')
-        wb=openpyxl.load_workbook(r'***REMOVED***\Desktop\stock2\Share_data_xl\2022-12-17(选择code).xlsx')
+        wb=openpyxl.load_workbook(r'2022-12-17(选择code).xlsx')
         sheet=wb[wb.sheetnames[0]]
         sheet.append((stock_code,stock_name,result[1]))
-        wb.save(r'***REMOVED***\Desktop\stock2\Share_data_xl\2022-12-17(选择code).xlsx')
+        wb.save(r'2022-12-17(选择code).xlsx')
     else:
         pass
 

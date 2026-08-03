@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import requests
 
@@ -19,7 +20,7 @@ def stock_individual_basic_info_xq(
     :return: 公司简介
     :rtype: pandas.DataFrame
     """
-    xq_a_token = "R:RMZ_XUEQIU_TOKEN"
+    xq_a_token = os.environ.get("XUEQIU_TOKEN", "")
     url = "https://stock.xueqiu.com/v5/stock/f10/cn/company.json"
     params = {
         "symbol": symbol,

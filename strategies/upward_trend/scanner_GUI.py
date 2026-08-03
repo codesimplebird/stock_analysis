@@ -29,7 +29,11 @@ from PyQt5.QtCore import (
 )
 from PyQt5.QtGui import (
     QFont, QPixmap, QIcon, QTextCursor, QPalette, QColor,
+    QIntValidator,
 )
+
+import threading
+PLOT_LOCK = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # 导入 scanner 引擎
@@ -215,8 +219,8 @@ class ScanWorker(QThread):
 
             amplitude, change_pct = criteria[1], criteria[2]
 
-            # 绘制 K 线图 (使用锁确保 Matplotlib 画图在多线程环境下的线程安全)
-            with lock:
+            # 绘制 K 线图 (使用全局 PLOT_LOCK 确保 Matplotlib 画图线程安全)
+            with PLOT_LOCK:
                 engine.plot_kline(stock_data, code, name)
 
             return {
@@ -271,6 +275,164 @@ class LoadResultWorker(QThread):
         else:
             self.result_loaded.emit(rows)
             self.log_message.emit(f"已加载 {len(rows)} 条历史结果: {os.path.basename(self.filepath)}")
+
+
+# ===================================================================
+# 单股验证/测试线程
+# ===================================================================
+class TestStockWorker(QThread):
+    """在后台线程中验证单只股票代码真实性，并进行策略规则测试。"""
+    finished = pyqtSignal(dict)  # 发送测试结果字典
+
+    def __init__(self, code, params, parent=None):
+        super().__init__(parent)
+        self.code = code.strip().zfill(6)
+        self.params = params
+        self._engine = StockUpward()
+        # 将参数同步至引擎实例
+        self._engine.start_date = params.get("start_date", "20250102")
+        self._engine.end_date = params.get("end_date", datetime.today().strftime("%Y%m%d"))
+        for k, v in params.items():
+            if hasattr(self._engine, k):
+                setattr(self._engine, k, v)
+
+    @staticmethod
+    def _fetch_eastmoney(code):
+        """从东方财富获取个股历史行情，SSL 失败时自动回退到不验证证书。"""
+        import requests
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        start = "20250102"
+        end = datetime.today().strftime("%Y%m%d")
+        secid = "1." + code if code.startswith(("6", "68")) else "0." + code
+        url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+        params = {
+            "fields1": "f1,f2,f3,f4,f5,f6",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f116",
+            "ut": "7eea3edcaed734bea9cbfc24409ed989",
+            "klt": "101",
+            "fqt": "1",
+            "secid": secid,
+            "beg": start,
+            "end": end,
+        }
+        try:
+            r = requests.get(url, params=params, timeout=10)
+        except Exception:
+            # SSL/连接失败，用 verify=False 重试
+            try:
+                r = requests.get(url, params=params, timeout=10, verify=False)
+            except Exception as e:
+                print(f"{code} 备用请求也失败: {e}")
+                return None
+
+        try:
+            data_json = r.json()
+        except Exception as e:
+            print(f"{code} 解析返回数据失败: {e}")
+            return None
+
+        if not (data_json.get("data") and data_json["data"].get("klines")):
+            return pd.DataFrame()
+
+        temp_df = pd.DataFrame([item.split(",") for item in data_json["data"]["klines"]])
+        temp_df.columns = [
+            "日期", "开盘", "收盘", "最高", "最低",
+            "成交量", "成交额", "振幅", "涨跌幅", "涨跌额", "换手率",
+        ]
+        for col in temp_df.columns[1:]:
+            temp_df[col] = pd.to_numeric(temp_df[col], errors="coerce")
+        temp_df["日期"] = pd.to_datetime(temp_df["日期"], errors="coerce").dt.date
+        return temp_df
+
+    def run(self):
+        try:
+            # 1. 验证是否是真实的股票代码，从本地 CSV 获取基本信息
+            name = "未知股票"
+            pe_ratio = "-"
+            found_locally = False
+
+            if os.path.exists(STOCK_CSV_PATH):
+                try:
+                    encodings = ["gbk", "utf-8", "gb18030"]
+                    for enc in encodings:
+                        try:
+                            df_all = pd.read_csv(STOCK_CSV_PATH, encoding=enc)
+                            df_all["代码"] = df_all["代码"].astype(str).str.zfill(6)
+                            match_row = df_all[df_all["代码"] == self.code]
+                            if not match_row.empty:
+                                name = match_row.iloc[0]["名称"]
+                                pe_ratio = match_row.iloc[0]["市盈率-动态"]
+                                found_locally = True
+                                break
+                        except Exception:
+                            continue
+                except Exception as e:
+                    print(f"验证股票代码时读取缓存错误: {e}")
+
+            # 2. 线上获取历史 K 线数据（直接请求，含 SSL 回退）
+            stock_data = self._fetch_eastmoney(self.code)
+            if stock_data is None or stock_data.empty:
+                self.finished.emit({
+                    "success": False,
+                    "code": self.code,
+                    "msg": "未找到该股票数据，代码可能不真实或暂无历史交易数据",
+                    "matched": False
+                })
+                return
+
+            # 3. 进行数据指标计算与判定
+            processed = self._engine.process_dataframe(stock_data)
+            if processed is None:
+                self.finished.emit({
+                    "success": True,
+                    "code": self.code,
+                    "name": name,
+                    "matched": False,
+                    "msg": "股票代码真实有效，但历史数据不足，无法计算指标",
+                    "details": f"市盈率: {pe_ratio}\n最近交易日天数不足以进行趋势判断。"
+                })
+                return
+
+            criteria = self._engine.check_criteria(processed)
+            matched = isinstance(criteria, list)
+
+            if matched:
+                amplitude, change_pct = criteria[1], criteria[2]
+                # 绘制 K 线图，使用全局 PLOT_LOCK 保护绘图线程安全
+                with PLOT_LOCK:
+                    self._engine.plot_kline(stock_data, self.code, name)
+                details = (
+                    f"长期均线趋势向上天数达标\n"
+                    f"20日振幅比例: {amplitude:.2%}\n"
+                    f"最近一天涨跌幅: {change_pct:.2f}%\n"
+                    f"市盈率: {pe_ratio}\n"
+                    f"筛选结果: 符合向上趋势条件！\n"
+                    f"K线图已生成保存。"
+                )
+            else:
+                details = (
+                    f"市盈率: {pe_ratio}\n"
+                    f"筛选结果: 不符合向上趋势条件。\n"
+                    f"原因：未同时满足 30日内MA20向上天数达标、振幅控制在5%-25%以内、近5天无大跌及近1天无大跌等条件。"
+                )
+
+            self.finished.emit({
+                "success": True,
+                "code": self.code,
+                "name": name,
+                "matched": matched,
+                "msg": f"测试完成！股票存在（{name}）",
+                "details": details
+            })
+        except Exception as e:
+            self.finished.emit({
+                "success": False,
+                "code": self.code,
+                "msg": f"单股测试过程出现异常: {e}",
+                "matched": False
+            })
 
 
 # ===================================================================
@@ -492,9 +654,33 @@ class MainWindow(QMainWindow):
 
         btn_layout.addStretch()
 
+        # ---- 单股测试组 ----
+        grp_test = QGroupBox("单股测试")
+        test_layout = QVBoxLayout(grp_test)
+        test_layout.setSpacing(6)
+
+        test_input_layout = QHBoxLayout()
+        self.edit_test_code = QLineEdit()
+        self.edit_test_code.setPlaceholderText("6位股票代码 (如600519)")
+        self.edit_test_code.setMaxLength(6)
+        self.edit_test_code.setValidator(QIntValidator(0, 999999))
+        
+        self.btn_test = QPushButton("🔍 测试")
+        self.btn_test.setMinimumHeight(28)
+        
+        test_input_layout.addWidget(self.edit_test_code, 1)
+        test_input_layout.addWidget(self.btn_test)
+        test_layout.addLayout(test_input_layout)
+
+        self.lbl_test_result = QLabel("输入代码并点击测试")
+        self.lbl_test_result.setWordWrap(True)
+        self.lbl_test_result.setStyleSheet("color: #666666; font-size: 11px; padding: 4px;")
+        test_layout.addWidget(self.lbl_test_result)
+
         # 组装左侧
         layout.addWidget(grp_params)
         layout.addWidget(grp_thresh)
+        layout.addWidget(grp_test)
         layout.addWidget(grp_btn)
         layout.addStretch()
         return widget
@@ -587,6 +773,7 @@ class MainWindow(QMainWindow):
         self.btn_stop.clicked.connect(self._on_stop_scan)
         self.btn_load.clicked.connect(self._on_load_result)
         self.btn_open_dir.clicked.connect(self._on_open_data_dir)
+        self.btn_test.clicked.connect(self._on_test_stock)
 
     # ==============================================================
     # 槽函数
@@ -692,6 +879,74 @@ class MainWindow(QMainWindow):
             self._append_log(f"已打开数据目录: {DATA_DIR}")
         except Exception as e:
             self._append_log(f"无法打开目录: {e}")
+
+    def _on_test_stock(self):
+        """单股测试按钮点击事件。"""
+        code = self.edit_test_code.text().strip()
+        if not code:
+            QMessageBox.warning(self, "提示", "请输入股票代码")
+            return
+
+        # 补全到6位
+        code = code.zfill(6)
+        self.edit_test_code.setText(code)
+
+        # 禁用按钮，避免并发操作
+        self.btn_test.setEnabled(False)
+        self.lbl_test_result.setText("正在验证股票代码真实性并计算指标...")
+        self.lbl_test_result.setStyleSheet("color: #666666; font-size: 11px; padding: 4px;")
+        self._append_log(f"开始验证与测试单股: {code}")
+
+        # 收集阈值等配置参数
+        params = {
+            "start_date": self.edit_start_date.text().strip() or "20250102",
+            "end_date": datetime.today().strftime("%Y%m%d"),
+            "upward_long_days": self.spin_long_days.value(),
+            "upward_long_threshold": self.spin_long_thresh.value(),
+            "upward_short_days": self.spin_short_days.value(),
+            "upward_short_threshold": self.spin_short_thresh.value(),
+            "data_offset": 0,
+        }
+
+        # 启动后台测试线程
+        self._test_worker = TestStockWorker(code, params)
+        self._test_worker.finished.connect(self._on_test_finished)
+        self._test_worker.start()
+
+    def _on_test_finished(self, res):
+        """单股测试线程执行完毕的回调。"""
+        self.btn_test.setEnabled(True)
+        if not res["success"]:
+            self.lbl_test_result.setText(res["msg"])
+            self.lbl_test_result.setStyleSheet("color: #f44336; font-weight: bold; font-size: 11px; padding: 4px;")
+            self._append_log(f"[单股测试] 失败: {res['code']} | {res['msg']}")
+            return
+
+        name = res["name"]
+        code = res["code"]
+        matched = res["matched"]
+
+        if matched:
+            result_str = f"✅ 【{name}】符合向上趋势条件！\n{res['details']}"
+            self.lbl_test_result.setStyleSheet("color: #4CAF50; font-weight: bold; font-size: 11px; padding: 4px;")
+            self._append_log(f"[单股测试] 股票: {code} {name} 符合向上趋势条件。")
+
+            # 自动展示绘制的 K 线图
+            kline_dir = os.path.join(CURRENT_DIR, "kline_charts")
+            candidates = [
+                os.path.join(kline_dir, f"{code}{name}.png"),
+                os.path.join(kline_dir, f"{code} {name}.png"),
+            ]
+            for path in candidates:
+                if os.path.exists(path):
+                    self._display_image(path, f"{code} {name} K线图 (测试验证)")
+                    break
+        else:
+            result_str = f"❌ 【{name}】不符合向上趋势条件。\n{res['details']}"
+            self.lbl_test_result.setStyleSheet("color: #f44336; font-weight: bold; font-size: 11px; padding: 4px;")
+            self._append_log(f"[单股测试] 股票: {code} {name} 不符合向上趋势条件。")
+
+        self.lbl_test_result.setText(result_str)
 
     # --------------------------------------------------------------
     def _on_load_result(self):

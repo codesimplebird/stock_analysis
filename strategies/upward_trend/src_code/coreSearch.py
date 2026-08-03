@@ -95,5 +95,5 @@ def stock_zh_a_hist_zk(
 
 if __name__ == "__main__":
     # Example usage
-    stock_data = stock_zh_a_hist_zk(symbol="000001", period="daily")
+    stock_data = stock_zh_a_hist_zk(symbol="000002", period="daily")
     print(stock_data.head())

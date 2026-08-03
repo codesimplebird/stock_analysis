@@ -8,7 +8,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 # # 设置 Tushare 的 token（需要注册 Tushare 账号获取）
 
 # Indicator_data
-# ts.set_token("R:RMZ_TS_TOKEN")
+# ts.set_token(os.environ.get("TS_TOKEN", ""))
 # pro = ts.pro_api()
 
 # # 获取某一天的股票数据
@@ -24,7 +24,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 # )
 class Stock_Analysis:
     def __init__(self):
-        ts.set_token("R:RMZ_TS_TOKEN")
+        ts.set_token(os.environ.get("TS_TOKEN", ""))
         self.pro = ts.pro_api()
 
     @staticmethod

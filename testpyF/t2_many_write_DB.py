@@ -3,6 +3,7 @@
 日期 开盘价 收盘价 当日最高 当日最低 成交量 成交额 振幅 涨跌幅 涨跌额 换手
 
 '''
+import os
 import time
 import random
 
@@ -36,7 +37,7 @@ def main():
 
 
 def create_tabel(stock_num):
-    conn = pymysql.connect(host='localhost', port=3306, user='R:RMZ_DB_USER', password='R:RMZ_DB_PASSWORD', database='stock_data',
+    conn = pymysql.connect(host='localhost', port=3306, user=os.environ.get('MYSQL_USER', ''), password=os.environ.get('MYSQL_PASSWORD', ''), database='stock_data',
                            charset='utf8mb4')
     try:
         with conn.cursor() as cursor:  # type: Cursor
@@ -71,7 +72,7 @@ def create_tabel(stock_num):
 
 
 def insert_table(stock_num, data):
-    conn = pymysql.connect(host='localhost', port=3306, user='R:RMZ_DB_USER', password='R:RMZ_DB_PASSWORD', database='stock_data',
+    conn = pymysql.connect(host='localhost', port=3306, user=os.environ.get('MYSQL_USER', ''), password=os.environ.get('MYSQL_PASSWORD', ''), database='stock_data',
                            charset='utf8mb4')
     try:
         with conn.cursor() as cursor:  # type: Cursor

@@ -230,5 +230,13 @@ def stock_zh_a_spot_em() -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    stock_zh_a_spot_em_df = stock_zh_a_spot_em()
+    import ssl
+    import akshare as ak
+
+    # 创建一个忽略 SSL 验证的上下文（仅用于测试！）
+
+    stock_zh_a_spot_em_df = ak.stock_zh_a_spot_em()
     stock_zh_a_spot_em_df.to_csv("stock_zh_a_spot_em.csv", index=False, encoding="gbk")
+
+# stock_zh_a_spot_em_df = stock_zh_a_spot_em()
+# stock_zh_a_spot_em_df.to_csv("stock_zh_a_spot_em.csv", index=False, encoding="gbk")

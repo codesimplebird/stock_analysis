@@ -1,3 +1,4 @@
+import os
 import time
 
 import pymysql
@@ -24,7 +25,7 @@ def read_stock_num():
 
 
 def select_data(stock_num_list):
-    conn = pymysql.connect(host='localhost', port=3306, user='R:RMZ_DB_USER', password='R:RMZ_DB_PASSWORD', database='stock_data',
+    conn = pymysql.connect(host='localhost', port=3306, user=os.environ.get('MYSQL_USER', ''), password=os.environ.get('MYSQL_PASSWORD', ''), database='stock_data',
                            charset='utf8mb4')
     datalist = []
     for stock_num in stock_num_list:

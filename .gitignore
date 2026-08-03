@@ -1,0 +1,23 @@
+# 环境变量与密钥（禁止提交）
+.env
+.env.*
+!.env.example
+
+# Python 编译缓存
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# 虚拟环境
+venv/
+.venv/
+stock2/
+
+# IDE 配置
+.idea/
+.vscode/
+.claude/
+
+# 日志
+*.log
